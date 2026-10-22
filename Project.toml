@@ -1,0 +1,13 @@
+name = "MIM_GA"
+uuid = "ddfa256d-3ddc-4eb1-a49f-172efad1cea5"
+authors = ["Anokye <manokye56@gmail.com>"]
+version = "1.0.0-DEV"
+
+[compat]
+julia = "1.10"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]
