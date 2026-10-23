@@ -7,7 +7,7 @@
 > Fill in a module description here
 """
 
-# %% ../nbs/00_core.ipynb #7f1367f0
+# %% ../nbs/00_core.ipynb #cell-2
 const UNIT_TO_METERS = Dict(
     "meter" => 1.0, "meters" => 1.0, "m" => 1.0,
     "foot" => 0.3048, "feet" => 0.3048, "ft" => 0.3048,
@@ -16,10 +16,10 @@ const UNIT_TO_METERS = Dict(
     "nautical_mile" => 1852.0, "nmi" => 1852.0,
 );
 
-# %% ../nbs/00_core.ipynb #945a557f
+# %% ../nbs/00_core.ipynb #cell-3
 to_meters(d::Real, unit::AbstractString) = d * UNIT_TO_METERS[unit];
 
-# %% ../nbs/00_core.ipynb #c7c48ac4
+# %% ../nbs/00_core.ipynb #cell-4
 """
 calc_resolution(x_coords, y_coords) -> (xres, yres)
 
@@ -33,7 +33,7 @@ function calc_resolution(x_coords::AbstractVector{<:Real}, y_coords::AbstractVec
     return xres, yres        
 end;
 
-# %% ../nbs/00_core.ipynb #5324f622
+# %% ../nbs/00_core.ipynb #cell-5
 """
 calc_cellsize(xres, yres; unit="meter") -> (cellsize_x, cellsize_y)
 for situations where the pixel resolution is already know. Converts to meters and
@@ -46,7 +46,7 @@ function cal_cellsize(xres::Real, yres::Real; unit::AbstractString="meter")
     return abs(cx), abs(cy)    
 end;
 
-# %% ../nbs/00_core.ipynb #89a92e3f
+# %% ../nbs/00_core.ipynb #cell-6
 """
 ellipse_kernel(half_w, half_h) -> Matrix{Float64}
 
@@ -79,7 +79,7 @@ function ellipse_kernel(half_w::Integer, half_h::Integer)
     return kernel
 end;
 
-# %% ../nbs/00_core.ipynb #1665986f
+# %% ../nbs/00_core.ipynb #cell-7
 """
 circle_kernel(cellsize_x, cellsize_y, radius) -> Matrix{Float64}
 
@@ -118,7 +118,7 @@ function circle_kernel(cellsize_x::Real, cellsize_y::Real, radius::Real)
     return kernel
 end;
 
-# %% ../nbs/00_core.ipynb #dfe65783
+# %% ../nbs/00_core.ipynb #cell-8
 """
 annulus_kernel(cellsize_x, cellsize_y, outer_radius, inner_radius) -> Matrix{Float64}
 
@@ -158,5 +158,50 @@ function annulus_kernel(cellsize_x::Real, cellsize_y::Real, outer_radius::Real, 
     end
     
     return kernel
+end;
+
+# %% ../nbs/00_core.ipynb #cell-9
+function kernel_mean_diff(data::AbstractMatrix{Float64}, kernel::AbstractMatrix{Float64})
+    rows, cols = size(data)
+    krows, kcols = size(kernel)
+    hr, hc = krows ÷ 2, kcols ÷ 2
+    
+    valid = .!isnan.(data)
+    filled = ifelse.(valid, data, 0.0)
+
+    out = similar(data)
+    
+    # Outer loop = Columns (j), Inner loop = Rows (i) for extreme speed
+    Threads.@threads for j in 1:cols
+        @inbounds for i in 1:rows
+            # If the center cell itself is NaN, don't bother calculating neighbors
+            if !valid[i, j]
+                out[i, j] = NaN
+                continue
+            end
+            
+            s, c = 0.0, 0.0
+            
+            # Kernel loop: process row offsets fastest (ki)
+            for kj in -hc:hc
+                nj = j + kj
+                if 1 <= nj <= cols
+                    k_col = kj + hc + 1
+                    for ki in -hr:hr
+                        w = kernel[ki + hr + 1, k_col]
+                        w == 0.0 && continue
+                        
+                        ni = i + ki
+                        if 1 <= ni <= rows
+                            s += w * filled[ni, nj]
+                            c += w * Float64(valid[ni, nj])
+                        end
+                    end
+                end
+            end
+            out[i, j] = c > 0.0 ? data[i, j] - (s / c) : NaN
+        end
+    end
+    return out
 end;
 
