@@ -36,6 +36,7 @@ end
 # %% ../nbs/02_morphometrics.ipynb #cell-6
 # TPI calculations with cell size
 function tpi(cellsize_x::Real, cellsize_y::Real, bathy::Bathymetry, radius::Real)
+    radius > 0 || throw(ArgumentError("radius must be > 0,  but received $(radius)"))
     clean_raster = replace_missing(bathy.raster, NaN)
 
     # 2. Extract a standard, pure in-memory Matrix{Float64} payload
@@ -51,10 +52,35 @@ function tpi(cellsize_x::Real, cellsize_y::Real, bathy::Bathymetry, radius::Real
 end
 
 # TPI calculations with cell size
-function tpi(bathy::Bathymetry, radius::Real; unit="meter")        
+function tpi(bathy::Bathymetry, radius::Real; unit::AbstractString="meter")        
     #calculate for cell size
     cellsize_x, cellsize_y, scaled_bathy = cellsize(bathy, unit=unit)
     
     return tpi(cellsize_x, cellsize_y, scaled_bathy, radius)
+end
+
+# %% ../nbs/02_morphometrics.ipynb #cell-7
+# BPI Calculations with cellsize
+function bpi(cellsize_x::Real, cellsize_y::Real, bathy::Bathymetry, inner_radius::Real, outer_radius::Real)  
+    outer_radius > 0 || throw(ArgumentError("outer_radius must be > 0,  but received $(outer_radius)"))
+    inner_radius >=0 || throw(ArgumentError("inner_radius must be >= 0,  but received $(inner_radius)"))
+    outer_radius <= inner_radius && throw(ArgumentError("outer_radius ($outer_radius) must be greater than inner_radius ($inner_radius)"))   
+
+    # 2. Extract a standard, pure in-memory Matrix{Float64} payload
+    clean_raster = replace_missing(bathy.raster, NaN)
+    raw_matrix = Matrix{Float64}(Array(clean_raster))
+    kernel = annulus_kernel(cellsize_x, cellsize_y, outer_radius, inner_radius)
+    
+    bpi_matrix = kernel_mean_diff(raw_matrix, kernel)  
+    # 4. Rebuild the georeferenced output layer
+    result_raster = rebuild(clean_raster; data = bpi_matrix, name = :bpi, missingval = NaN)
+    return Bathymetry(result_raster)
+end
+
+function bpi(bathy::Bathymetry, inner_radius::Real, outer_radius::Real; unit::AbstractString="meter")
+    #calculate for cell size
+    cellsize_x, cellsize_y, scaled_bathy = cellsize(bathy, unit=unit)
+
+    return bpi(cellsize_x, cellsize_y, scaled_bathy, inner_radius, outer_radius)
 end
 

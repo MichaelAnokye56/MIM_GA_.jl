@@ -2,30 +2,15 @@
 # Edit the source notebook(s) below instead, then re-run `export_project()`.
 
 # %% ../nbs/01_abstract.ipynb #cell-2
-begin
-
 # abstract types
 abstract type AbstractSeafloorMap end;
-# functions to implement
-function morphological_low end;
-function morphological_high end;
-
-end
-
-# %% ../nbs/01_abstract.ipynb #cell-3
-begin
-
 abstract type AbstractBathymetry <: AbstractSeafloorMap end;  
 abstract type AbstractBackscatter <: AbstractSeafloorMap end;
 
-end
-
-# %% ../nbs/01_abstract.ipynb #cell-4
-begin
-
+# functions to implement
+function morphological_low end;
+function morphological_high end;
 function cellsize end;
-    
-end
 
 # %% ../nbs/01_abstract.ipynb #cell-5
 # The unified, lightweight lazy proxy struct
