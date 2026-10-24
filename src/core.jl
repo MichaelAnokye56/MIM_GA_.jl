@@ -205,3 +205,148 @@ function kernel_mean_diff(data::AbstractMatrix{Float64}, kernel::AbstractMatrix{
     return out
 end;
 
+# %% ../nbs/00_core.ipynb #cell-10
+"""
+    _ray_directions(n_directions, cellsize_x, cellsize_y) -> (dcol, drow, step_m)
+
+Unit step vectors in pixel-index space for `n_directions` evenly spaced ground
+azimuths (clockwise from east, since rows increase southwards), plus the ground
+length in metres of one unit step along each ray. Callers must use
+`r * step_m[d]` as the ground distance and cap rays at
+`floor(radius_m / step_m[d])` steps for an isotropic search window.
+"""
+function ray_directions(n_directions::Integer, cellsize_x::Real, cellsize_y::Real)
+    n_directions > 0 && iseven(n_directions) ||
+        throw(ArgumentError("n_directions must be a positive even integer (got $n_directions)"))
+    cx, cy = abs(float(cellsize_x)), abs(float(cellsize_y))
+    dcol   = Vector{Float64}(undef, n_directions)
+    drow   = Vector{Float64}(undef, n_directions)
+    step_m = Vector{Float64}(undef, n_directions)
+    for d in 0:n_directions-1
+        t = 2d / n_directions                 # azimuth in units of π
+        u = cospi(t) / cx
+        v = sinpi(t) / cy
+        nrm = hypot(u, v)
+        dcol[d+1]   = u / nrm
+        drow[d+1]   = v / nrm
+        step_m[d+1] = 1 / nrm                 # metres per unit pixel step
+    end
+    return dcol, drow, step_m
+end
+
+# %% ../nbs/00_core.ipynb #c01e394d
+"""
+    _max_elevation_angle(data, y, x, dcol, drow, n_steps, cellsize_x, cellsize_y)
+        -> (angle_rad, steps_done)
+
+Largest unclamped elevation angle along one ray (nearest-neighbour sampling),
+and the number of valid steps walked before hitting the raster edge, a NaN
+cell, or `n_steps`. Returns `(NaN, 0)` for a NaN centre or an empty ray, so
+the caller can decide whether the cell has enough coverage to be reported.
+"""
+function max_elevation_angle(data::AbstractMatrix{T}, y::Integer, x::Integer,
+                              dcol::Real, drow::Real, n_steps::Integer,
+                              cellsize_x::Real, cellsize_y::Real) where {T<:AbstractFloat}
+    rows, cols = size(data)
+    center = data[y, x]
+    isnan(center) && return (NaN, 0)
+    best  = -Inf
+    steps = 0
+    for r in 1:n_steps
+        sx = x + round(Int, r * dcol)
+        sy = y + round(Int, r * drow)
+        (1 <= sx <= cols && 1 <= sy <= rows) || break
+        @inbounds elev = data[sy, sx]
+        isnan(elev) && break
+        dist  = hypot((sx - x) * cellsize_x, (sy - y) * cellsize_y)
+        best  = max(best, atan(elev - center, dist))
+        steps = r
+    end
+    return steps == 0 ? (NaN, 0) : (Float64(best), steps)
+end
+
+# %% ../nbs/00_core.ipynb #1287b971
+"""
+    _openness_core(dem, cellsize_x, cellsize_y; radius_m, n_directions=8,
+                   sign=1, nodata=nothing, min_coverage=1.0) -> Matrix{Float64}
+
+Mean zenith angle (degrees) over `n_directions` ground-evenly-spaced azimuths,
+searching to `radius_m` metres. `sign = 1` gives positive openness; `sign = -1`
+gives negative openness (equivalent to running on `-dem`, without the copy).
+`dem` must hold elevations (depths negative). A cell is reported only if every
+ray completes at least `min_coverage` of its steps; otherwise it is NaN. PO and
+NO therefore share an identical NaN footprint.
+"""
+function openness_core(dem::AbstractMatrix{T}, cellsize_x::Real, cellsize_y::Real;
+                        radius_m::Real,
+                        n_directions::Integer = 8,
+                        sign::Integer = 1,
+                        nodata = nothing,
+                        min_coverage::Real = 1.0) where {T<:Real}
+    radius_m > 0          || throw(ArgumentError("radius_m must be > 0, got $radius_m"))
+    sign in (1, -1)       || throw(ArgumentError("sign must be 1 or -1, got $sign"))
+    0 < min_coverage <= 1 || throw(ArgumentError("min_coverage must be in (0, 1], got $min_coverage"))
+
+    dcol, drow, step_m = ray_directions(n_directions, cellsize_x, cellsize_y)  # validates n
+    n_steps = [max(1, floor(Int, radius_m / s)) for s in step_m]                 # isotropic in metres
+
+    rows, cols = size(dem)
+    data = Matrix{Float64}(undef, rows, cols)
+    @inbounds for i in eachindex(dem)
+        v = dem[i]                                   # compare sentinel in source type
+        data[i] = (nodata !== nothing && v == nodata) ? NaN : sign * Float64(v)
+    end
+
+    out = fill(NaN, rows, cols)
+    Threads.@threads for x in 1:cols                 # one column per task: no races
+        for y in 1:rows                              # y fastest: column-major
+            @inbounds isnan(data[y, x]) && continue
+            acc  = 0.0
+            keep = true
+            for d in 1:n_directions
+                phi, done = max_elevation_angle(data, y, x, dcol[d], drow[d],
+                                                 n_steps[d], cellsize_x, cellsize_y)
+                if done < min_coverage * n_steps[d]
+                    keep = false
+                    break
+                end
+                acc += 90.0 - rad2deg(phi)
+            end
+            keep && (@inbounds out[y, x] = acc / n_directions)
+        end
+    end
+    return out
+end
+
+# %% ../nbs/00_core.ipynb #a1b15529
+"""
+positive_openness(dem; max_radius=10, n_directions=8, cellsize_x=1.0, cellsize_y=1.0) -> Matrix{Float64}
+
+GA-SaMMT's "PO" (positive openness, section 2.1.1.2): the
+"above-ground" view of the landscape. Well above 90 degrees on convex
+forms (ridges, peaks, seamount tops); near 90 on flat/open terrain;
+at or below 90 on enclosed/concave terrain.
+"""
+function positive_openness(dem::AbstractMatrix{<:Real};
+                           max_radius::Integer=10, n_directions::Integer=8,
+                           cellsize_x::Real=1.0, cellsize_y::Real=1.0)
+    return openness_core(dem, cellsize_x, cellsize_y; radius_m=max_radius, n_directions=n_directions)
+end
+
+# %% ../nbs/00_core.ipynb #eadc4b62
+"""
+negative_openness(dem; max_radius=10, n_directions=8, cellsize_x=1.0, cellsize_y=1.0) -> Matrix{Float64}
+
+GA-SaMMT's "NO" (negative openness, section 2.1.1.2): the
+"below-ground" view of the landscape. Well above 90 degrees on concave
+forms (valleys, pits, depressions); near 90 on flat/open terrain; at
+or below 90 on convex terrain. Computed as `positive_openness` applied
+to the negated DEM -- see file header for why that's the correct,
+standard definition and not just a shortcut.
+"""
+function negative_openness(dem::AbstractMatrix{<:Real};
+                           max_radius::Integer=10, n_directions::Integer=8,
+                           cellsize_x::Real=1.0, cellsize_y::Real=1.0)
+    return openness_core(-Float64.(dem), cellsize_x, cellsize_y; radius_m=max_radius, n_directions=n_directions)
+end
+

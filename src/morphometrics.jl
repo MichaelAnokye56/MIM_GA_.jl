@@ -26,7 +26,6 @@ function cellsize(bathy::Bathymetry; unit::AbstractString="meter")
 
     xres, yres = calc_resolution(Float64.(x_coords), Float64.(y_coords))
     cx, cy = cal_cellsize(xres, yres; unit=unit)
-    
     scaled_bathy = clean_raster .* UNIT_TO_METERS[unit]
 
     return (cx, cy, Bathymetry(scaled_bathy)) 
@@ -42,9 +41,7 @@ function tpi(cellsize_x::Real, cellsize_y::Real, bathy::Bathymetry, radius::Real
     # 2. Extract a standard, pure in-memory Matrix{Float64} payload
     raw_matrix = Matrix{Float64}(Array(clean_raster))
     kernel = circle_kernel(cellsize_x, cellsize_y, radius)
-
     tpi_matrix = kernel_mean_diff(raw_matrix, kernel)
-
     # 4. Rebuild the georeferenced output layer
     result_raster = rebuild(clean_raster; data = tpi_matrix, name = :tpi, missingval = NaN)
     
@@ -55,7 +52,6 @@ end
 function tpi(bathy::Bathymetry, radius::Real; unit::AbstractString="meter")        
     #calculate for cell size
     cellsize_x, cellsize_y, scaled_bathy = cellsize(bathy, unit=unit)
-    
     return tpi(cellsize_x, cellsize_y, scaled_bathy, radius)
 end
 
@@ -82,5 +78,35 @@ function bpi(bathy::Bathymetry, inner_radius::Real, outer_radius::Real; unit::Ab
     cellsize_x, cellsize_y, scaled_bathy = cellsize(bathy, unit=unit)
 
     return bpi(cellsize_x, cellsize_y, scaled_bathy, inner_radius, outer_radius)
+end
+
+# %% ../nbs/02_morphometrics.ipynb #cell-8
+# Openness calculations with cell size
+function openness(cellsize_x::Real, cellsize_y::Real, bathy::Bathymetry, max_radius::Real;
+                   n_directions::Integer=8)
+    max_radius > 0 || throw(ArgumentError("max_radius must be > 0,  but received $(max_radius)"))
+
+    clean_raster = replace_missing(bathy.raster, NaN)
+
+    # 2. Extract a standard, pure in-memory Matrix{Float64} payload
+    raw_matrix = Matrix{Float64}(Array(clean_raster))
+
+    po_matrix = positive_openness(raw_matrix; max_radius=max_radius, n_directions=n_directions,
+                                   cellsize_x=cellsize_x, cellsize_y=cellsize_y)
+    no_matrix = negative_openness(raw_matrix; max_radius=max_radius, n_directions=n_directions,
+                                   cellsize_x=cellsize_x, cellsize_y=cellsize_y)
+
+    # 4. Rebuild the georeferenced output layers
+    po_raster = rebuild(clean_raster; data = po_matrix, name = :positive_openness, missingval = NaN)
+    no_raster = rebuild(clean_raster; data = no_matrix, name = :negative_openness, missingval = NaN)
+
+    return (positive = Bathymetry(po_raster), negative = Bathymetry(no_raster))
+end
+
+# Openness calculations with cell size
+function openness(bathy::Bathymetry, max_radius::Real; unit::AbstractString="meter", n_directions::Integer=8)
+    #calculate for cell size
+    cellsize_x, cellsize_y, scaled_bathy = cellsize(bathy, unit=unit)
+    return openness(cellsize_x, cellsize_y, scaled_bathy, max_radius; n_directions=n_directions)
 end
 
