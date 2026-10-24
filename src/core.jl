@@ -328,7 +328,7 @@ forms (ridges, peaks, seamount tops); near 90 on flat/open terrain;
 at or below 90 on enclosed/concave terrain.
 """
 function positive_openness(dem::AbstractMatrix{<:Real};
-                           max_radius::Integer=10, n_directions::Integer=8,
+                           max_radius::Real=10, n_directions::Integer=8,
                            cellsize_x::Real=1.0, cellsize_y::Real=1.0)
     return openness_core(dem, cellsize_x, cellsize_y; radius_m=max_radius, n_directions=n_directions)
 end
@@ -345,7 +345,7 @@ to the negated DEM -- see file header for why that's the correct,
 standard definition and not just a shortcut.
 """
 function negative_openness(dem::AbstractMatrix{<:Real};
-                           max_radius::Integer=10, n_directions::Integer=8,
+                           max_radius::Real=10, n_directions::Integer=8,
                            cellsize_x::Real=1.0, cellsize_y::Real=1.0)
     return openness_core(-Float64.(dem), cellsize_x, cellsize_y; radius_m=max_radius, n_directions=n_directions)
 end
