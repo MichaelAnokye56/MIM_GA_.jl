@@ -29,6 +29,30 @@ struct TPIMethod <: MorphologyMethod end
 struct OpennessMethod <: MorphologyMethod end
 struct BPIMethod      <: MorphologyMethod end
 
+# %% ../nbs/03_morphology_map.ipynb #743aca47
+# Stringify an SRS as WKT, tolerating a CRS that's present but incomplete
+# rather than raising -- see polygonize_filtered's docstring for the real
+# scenario this covers (a GDAL overview file opened directly, whose CRS is
+# a non-null object wrapping an empty WKT string). Tries WKT1 first (the
+# existing, already-verified format for every previously-working case),
+# falls back to WKT2 (can represent some CRS constructs WKT1 can't), and
+# finally gives up silently (empty string, same as the already-handled
+# genuinely-no-CRS case) -- stringifying the CRS is only ever used for a
+# metadata tag here, never for the geometries' own correctness.
+function safe_toWKT(srs)
+    try
+        return ArchGDAL.toWKT(srs)
+    catch
+    end
+    try
+        wktptr = Ref{Cstring}()
+        result = ArchGDAL.GDAL.osrexporttowktex(srs, wktptr, ["FORMAT=WKT2"])
+        result == ArchGDAL.GDAL.OGRERR_NONE && return unsafe_string(wktptr[])
+    catch
+    end
+    return ""
+end
+
 # %% ../nbs/03_morphology_map.ipynb #cell-4
 """
     threshold_mask(raster, C; sign) -> BitMatrix
@@ -99,6 +123,23 @@ right now, just a CRS tag. If `template` itself has no CRS set, GDAL
 round-trips it as a `LOCAL_CS["unnamed", ...]` placeholder rather than
 erroring, so this still works (verified), it just tags the table as
 explicitly CRS-less instead of silently so.
+
+Stringifying the CRS for that tag (`ArchGDAL.toWKT`, which defaults to
+WKT1) can itself fail with "Failed to convert this SRS into WKT format"
+for a source whose CRS is present but incomplete -- verified in practice
+against a GDAL *overview* (`.tif.ovr`) file opened directly rather than
+through its parent `.tif`: `Rasters.crs` on it comes back as a CRS object
+wrapping an *empty* WKT string (not Julia `nothing`/no-CRS, which is the
+case the paragraph above already handles cleanly), and `ArchGDAL.importWKT`
+on that empty string produces a non-null but incomplete `SpatialRef` that
+WKT1 export rejects outright. This is a real, previously-unhit scenario
+with real data (not hypothetical), so `toWKT` is retried as WKT2 (which
+can represent some CRS constructs WKT1 can't) before giving up and tagging
+the table as unknown-CRS, the same as the already-handled no-CRS case --
+never raising past this point, since a failure to *stringify* the CRS
+should not block the geometries themselves, which already carry the
+correct CRS directly via `spatialref=srs` on the output layer, independent
+of whether that CRS can also be rendered as a WKT string.
 """
 function polygonize_filtered(mask::AbstractMatrix{Bool}, template::Raster, area_threshold::Real)
     area_threshold >= 0 || throw(ArgumentError("area_threshold must be >= 0, got $area_threshold"))
@@ -116,7 +157,7 @@ function polygonize_filtered(mask::AbstractMatrix{Bool}, template::Raster, area_
     try
         band = ArchGDAL.getband(dataset, 1)
         srs = ArchGDAL.importWKT(ArchGDAL.getproj(dataset))
-        crs_wkt = ArchGDAL.toWKT(srs)
+        crs_wkt = safe_toWKT(srs)
         vec_ds = ArchGDAL.unsafe_create(ArchGDAL.getdriver("Memory"); filename="")
         try
             layer = ArchGDAL.createlayer(name="polys", dataset=vec_ds, geom=ArchGDAL.wkbPolygon,
